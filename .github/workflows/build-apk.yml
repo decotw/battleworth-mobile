@@ -1,0 +1,89 @@
+name: Build Battleworth APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Unpack Battleworth project
+        shell: bash
+        run: |
+          test -f Battleworth_Project.zip
+          rm -rf buildsrc
+          mkdir buildsrc
+          unzip -q Battleworth_Project.zip -d buildsrc
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android API 36
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Install dependencies
+        working-directory: buildsrc
+        run: npm install --no-audit --no-fund
+
+      - name: Create Android project
+        working-directory: buildsrc
+        run: npx cap add android
+
+      - name: Apply native mobile patch
+        working-directory: buildsrc
+        run: python3 apply_android_mobile_patch.py
+
+      - name: Sync web assets
+        working-directory: buildsrc
+        run: npx cap sync android
+
+      - name: Reapply native patch
+        working-directory: buildsrc
+        run: python3 apply_android_mobile_patch.py
+
+      - name: Build debug APK
+        working-directory: buildsrc/android
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Prepare APK
+        shell: bash
+        run: |
+          cp buildsrc/android/app/build/outputs/apk/debug/app-debug.apk Battleworth-debug.apk
+          sha256sum Battleworth-debug.apk > Battleworth-debug.sha256
+          ls -lh Battleworth-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Battleworth-debug-apk
+          path: |
+            Battleworth-debug.apk
+            Battleworth-debug.sha256
+          retention-days: 14
